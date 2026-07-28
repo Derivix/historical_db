@@ -66,26 +66,26 @@ _INDEX_SYMBOLS = frozenset({
 
 # Options: <SYMBOL><DDMMMYY><STRIKE>[CE|PE].<SEGMENT>
 _RE_OPTION = re.compile(
-    r"^(?P<symbol>[A-Z&]+?)(?P<expiry>\d{2}[A-Z]{3}\d{2})(?P<strike>\d+(?:\.\d+)?)(?P<opt_type>CE|PE)\.(?P<segment>\w+)$"
+    r"^(?P<symbol>[A-Z0-9&-]+?)(?P<expiry>\d{2}[A-Z]{3}\d{2})(?P<strike>\d+(?:\.\d+)?)(?P<opt_type>CE|PE)\.(?P<segment>\w+)$"
 )
 
 # Futures: <SYMBOL>FUT<DDMMMYY>.<SEGMENT>
 _RE_FUTURE = re.compile(
-    r"^(?P<symbol>[A-Z&]+?)FUT(?P<expiry>\d{2}[A-Z]{3}\d{2})\.(?P<segment>\w+)$"
+    r"^(?P<symbol>[A-Z0-9&-]+?)FUT(?P<expiry>\d{2}[A-Z]{3}\d{2})\.(?P<segment>\w+)$"
 )
 
 # Continuous (back-adjusted) futures: <SYMBOL>-O.<SEGMENT>, -I, -II, -III
 # Zerodha format: NIFTY-O.NFO (front month proxy), NIFTY-I.NFO, NIFTY-II.NFO, NIFTY-III.NFO
-# Symbol may contain digits, e.g. 360ONE-I.NFO
+# Symbol may contain digits or hyphens, e.g. 360ONE-I.NFO or BAJAJ-AUTO-I.NFO
 _RE_CONTINUOUS_FUT = re.compile(
-    r"^(?P<symbol>[A-Z0-9&]+)-(?P<rank>O|I{1,3})\.(?P<segment>\w+)$"
+    r"^(?P<symbol>[A-Z0-9&-]+)-(?P<rank>O|I{1,3})\.(?P<segment>\w+)$"
 )
 
 _CONTINUOUS_RANK: dict[str, int] = {"O": 0, "I": 1, "II": 2, "III": 3}
 
 # Spot / Index EQ: <SYMBOL>.<SEGMENT>
 _RE_SPOT = re.compile(
-    r"^(?P<symbol>[A-Z&]+)\.(?P<segment>\w+)$"
+    r"^(?P<symbol>[A-Z0-9&-]+)\.(?P<segment>\w+)$"
 )
 
 
@@ -201,6 +201,13 @@ def parse_ticker(raw_ticker: str) -> ParsedTicker:
         )
 
     # --- Try spot / EQ / INDEX ---
+    if "." in ticker:
+        stem, _segment = ticker.rsplit(".", 1)
+        if re.search(r"\d{2}[A-Z]{3}\d{2}[-]?\d*(?:CE|PE)$", stem, re.IGNORECASE):
+            raise TickerParseError(
+                f"Cannot parse option ticker {ticker!r}: invalid option structure"
+            )
+
     m = _RE_SPOT.match(ticker)
     if m:
         symbol  = m.group("symbol")

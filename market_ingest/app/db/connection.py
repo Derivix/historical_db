@@ -13,6 +13,7 @@ The pool is lazily initialised on first use and uses settings from app.config.
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import threading
 from typing import Generator
@@ -70,6 +71,9 @@ def close_pool() -> None:
         _pool.close()
         _pool = None
         logger.info("connection_pool_closed")
+
+
+atexit.register(close_pool)
 
 
 # ---------------------------------------------------------------------------

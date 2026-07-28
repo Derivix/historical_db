@@ -36,6 +36,7 @@ def migrate(
     dsn: Optional[str] = typer.Option(None, "--dsn", help="PostgreSQL DSN (overrides config)")
 ) -> None:
     """Create or upgrade the database schema idempotently."""
+    from app.db.connection import close_pool
     from app.db.migrations import run_migrations
     typer.echo("Running migrations…")
     try:
@@ -44,6 +45,8 @@ def migrate(
     except Exception as exc:
         typer.echo(f"Migration failed: {exc}", err=True)
         raise typer.Exit(code=1)
+    finally:
+        close_pool()
 
 
 @app.command()
@@ -53,6 +56,7 @@ def ingest(
     strict: bool = typer.Option(False, "--strict", help="Abort on first row validation error"),
 ) -> None:
     """Load a file or directory of files into the database."""
+    from app.db.connection import close_pool
     from app.ingest.pipeline import ingest_path
     typer.echo(f"Ingesting: {path}")
     try:
@@ -66,6 +70,8 @@ def ingest(
     except Exception as exc:
         typer.echo(f"Ingest failed: {exc}", err=True)
         raise typer.Exit(code=1)
+    finally:
+        close_pool()
 
 
 @app.command()
@@ -73,6 +79,7 @@ def features(
     method: str = typer.Option("OFFSET", "--method", "-m", help="Selection method (default: OFFSET)"),
 ) -> None:
     """Compute VWAP features and option selections."""
+    from app.db.connection import close_pool
     from app.features.vwap import compute_and_store_vwap
     from app.features.selection import run_selections
 
@@ -91,6 +98,8 @@ def features(
     except Exception as exc:
         typer.echo(f"Selection computation failed: {exc}", err=True)
         raise typer.Exit(code=1)
+    finally:
+        close_pool()
 
 
 @app.command()
@@ -104,6 +113,7 @@ def audit(
     """
     from app.audit.checks import run_all_checks
     from app.audit.report import print_report, write_json_report
+    from app.db.connection import close_pool
 
     typer.echo("Running audit checks…")
     try:
@@ -112,11 +122,14 @@ def audit(
         typer.echo(f"Audit failed: {exc}", err=True)
         raise typer.Exit(code=1)
 
-    print_report(report)
-    write_json_report(report, output_path=output)
+    try:
+        print_report(report)
+        write_json_report(report, output_path=output)
 
-    if report.has_critical_failures():
-        raise typer.Exit(code=1)
+        if report.has_critical_failures():
+            raise typer.Exit(code=1)
+    finally:
+        close_pool()
 
 
 @app.command(name="all")
@@ -132,6 +145,7 @@ def run_all(
 
     Exits non-zero if any step fails or audit finds critical issues.
     """
+    from app.db.connection import close_pool
     from app.db.migrations import run_migrations
     from app.ingest.pipeline import ingest_path
     from app.features.vwap import compute_and_store_vwap
@@ -139,51 +153,54 @@ def run_all(
     from app.audit.checks import run_all_checks
     from app.audit.report import print_report, write_json_report
 
-    typer.echo("Step 1/4: Running migrations…")
     try:
-        run_migrations()
-    except Exception as exc:
-        typer.echo(f"Migration failed: {exc}", err=True)
-        raise typer.Exit(code=1)
-
-    typer.echo(f"Step 2/4: Ingesting {path}…")
-    try:
-        result = ingest_path(path, profile_name=profile, strict=strict)
-        typer.echo(result.summary())
-        if result.errors:
-            for e in result.errors:
-                typer.echo(f"  [error] {e}", err=True)
+        typer.echo("Step 1/4: Running migrations…")
+        try:
+            run_migrations()
+        except Exception as exc:
+            typer.echo(f"Migration failed: {exc}", err=True)
             raise typer.Exit(code=1)
-    except typer.Exit:
-        raise
-    except Exception as exc:
-        typer.echo(f"Ingest failed: {exc}", err=True)
-        raise typer.Exit(code=1)
 
-    typer.echo("Step 3/4: Computing features…")
-    try:
-        n_vwap = compute_and_store_vwap()
-        typer.echo(f"  VWAP rows: {n_vwap}")
-        n_sel = run_selections(method=method)
-        typer.echo(f"  Selection rows: {n_sel}")
-    except Exception as exc:
-        typer.echo(f"Features step failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        typer.echo(f"Step 2/4: Ingesting {path}…")
+        try:
+            result = ingest_path(path, profile_name=profile, strict=strict)
+            typer.echo(result.summary())
+            if result.errors:
+                for e in result.errors:
+                    typer.echo(f"  [error] {e}", err=True)
+                raise typer.Exit(code=1)
+        except typer.Exit:
+            raise
+        except Exception as exc:
+            typer.echo(f"Ingest failed: {exc}", err=True)
+            raise typer.Exit(code=1)
 
-    typer.echo("Step 4/4: Running audit…")
-    try:
-        report = run_all_checks()
-    except Exception as exc:
-        typer.echo(f"Audit failed: {exc}", err=True)
-        raise typer.Exit(code=1)
+        typer.echo("Step 3/4: Computing features…")
+        try:
+            n_vwap = compute_and_store_vwap()
+            typer.echo(f"  VWAP rows: {n_vwap}")
+            n_sel = run_selections(method=method)
+            typer.echo(f"  Selection rows: {n_sel}")
+        except Exception as exc:
+            typer.echo(f"Features step failed: {exc}", err=True)
+            raise typer.Exit(code=1)
 
-    print_report(report)
-    write_json_report(report, output_path=output)
+        typer.echo("Step 4/4: Running audit…")
+        try:
+            report = run_all_checks()
+        except Exception as exc:
+            typer.echo(f"Audit failed: {exc}", err=True)
+            raise typer.Exit(code=1)
 
-    if report.has_critical_failures():
-        raise typer.Exit(code=1)
+        print_report(report)
+        write_json_report(report, output_path=output)
 
-    typer.echo("\nAll steps complete.")
+        if report.has_critical_failures():
+            raise typer.Exit(code=1)
+
+        typer.echo("\nAll steps complete.")
+    finally:
+        close_pool()
 
 
 if __name__ == "__main__":

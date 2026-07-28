@@ -149,6 +149,13 @@ class TestContinuousFutureParsing:
         assert p.continuous_rank == 1
         assert p.raw_ticker == "360ONE-I.NFO"
 
+    def test_symbol_with_hyphen(self):
+        p = parse_ticker("BAJAJ-AUTO-I.NFO")
+        assert p.symbol == "BAJAJ-AUTO"
+        assert p.instrument_type == "FUT"
+        assert p.continuous_rank == 1
+        assert p.segment == "NFO"
+
     def test_nifty_o_rank_zero(self):
         p = parse_ticker("NIFTY-O.NFO")
         assert p.symbol == "NIFTY"
