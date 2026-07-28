@@ -1,0 +1,64 @@
+granularity: intraday
+timezone: "Asia/Kolkata"
+datetime_format: "%m/%d/%Y %H:%M:%S"
+column_map:
+  ticker:
+    - ticker
+    - symbol
+    - instrument
+    - tradingsymbol
+    - scrip
+    - scripname
+    - scripcode
+    - token
+  date:
+    - date
+    - trade_date
+    - tradedate
+    - trading_date
+    - bar_date
+    - dt
+  time:
+    - time
+    - trade_time
+    - tradetime
+    - bar_time
+    - tm
+  open:
+    - open
+    - open_price
+    - openprice
+    - o
+  high:
+    - high
+    - high_price
+    - highprice
+    - h
+  low:
+    - low
+    - low_price
+    - lowprice
+    - l
+  close:
+    - close
+    - close_price
+    - closeprice
+    - last
+    - ltp
+    - last_price
+    - lastprice
+    - c
+  volume:
+    - volume
+    - vol
+    - qty
+    - traded_qty
+    - tradedqty
+    - trd_qty
+    - v
+  open_interest:
+    - open_interest
+    - oi
+    - openinterest
+    - open interest
+    - oi_qty

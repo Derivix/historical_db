@@ -1,0 +1,51 @@
+# Ignore all .env files
+.env
+.env.*
+*.env
+
+# Local data and generated outputs
+data
+*.csv
+*.xml
+*.json
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# Editor and OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+*.bak
+*.orig
+
+# Local databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal

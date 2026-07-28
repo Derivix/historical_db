@@ -1,0 +1,20 @@
+database:
+  dsn: "postgresql://postgres:password@localhost:5432/market_data"
+  pool_min: 2
+  pool_max: 10
+
+ingest:
+  batch_size: 10000
+  default_profile: default
+  profiles_dir: config/profiles
+
+session:
+  start: "09:15"
+  end: "15:30"
+  timezone: "Asia/Kolkata"
+  granularity_minutes: 1
+
+audit:
+  max_gap_pct: 5.0
+  missing_oi_critical: false
+  output_path: audit_report.json

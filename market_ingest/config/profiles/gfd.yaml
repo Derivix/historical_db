@@ -1,0 +1,22 @@
+granularity: intraday
+timezone: "Asia/Kolkata"
+datetime_format: "%d/%m/%Y"
+column_map:
+  ticker:
+    - ticker
+  date:
+    - date
+  time:
+    - time
+  open:
+    - open
+  high:
+    - high
+  low:
+    - low
+  close:
+    - close
+  volume:
+    - volume
+  open_interest:
+    - open interest
