@@ -82,6 +82,12 @@ class TestHappyPath:
         result = map_columns(headers, profile)
         assert result.get("open_interest") is None
 
+    def test_volume_optional_when_missing(self):
+        profile = _make_profile()
+        headers = ["Ticker", "Date", "Time", "Open", "High", "Low", "Close"]
+        result = map_columns(headers, profile)
+        assert result.get("volume") is None
+
     def test_require_method_raises_for_unmapped(self):
         profile = _make_profile()
         headers = ["Ticker", "Date", "Time", "Open", "High", "Low", "Close", "Volume"]

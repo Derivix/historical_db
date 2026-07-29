@@ -158,7 +158,7 @@ def ingest_file(
     col_high   = mapping.require("high")
     col_low    = mapping.require("low")
     col_close  = mapping.require("close")
-    col_volume = mapping.require("volume")
+    col_volume = mapping.get("volume")
     col_time   = mapping.get("time")
     col_oi     = mapping.get("open_interest")
 
@@ -197,8 +197,14 @@ def ingest_file(
                 high   = _to_float(row.get(col_high))
                 low    = _to_float(row.get(col_low))
                 close  = _to_float(row.get(col_close))
-                volume = _to_int(row.get(col_volume))
-                oi     = _to_int_opt(row.get(col_oi) if col_oi else None)
+
+                volume_raw = row.get(col_volume) if col_volume else None
+                volume = _to_int(volume_raw) if (volume_raw is not None and _str(volume_raw) != "") else 0
+
+                oi_raw = row.get(col_oi) if col_oi else None
+                oi = _to_int_opt(oi_raw) if (oi_raw is not None and _str(oi_raw) != "") else 0
+                if oi is None:
+                    oi = 0
 
                 # Validate row
                 from app.ingest.validator import validate_row, RowReject

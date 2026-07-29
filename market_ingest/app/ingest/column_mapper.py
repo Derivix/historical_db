@@ -4,9 +4,9 @@ using a YAML profile.
 
 Canonical fields
 ----------------
-Required (always): ticker, date, open, high, low, close, volume
+Required (always): ticker, date, open, high, low, close
 Required (intraday): time
-Optional: open_interest
+Optional: volume, open_interest
 
 Rules
 -----
@@ -65,9 +65,9 @@ class MappingResult:
 # Core mapper
 # ---------------------------------------------------------------------------
 
-_REQUIRED_FIELDS = frozenset({"ticker", "date", "open", "high", "low", "close", "volume"})
+_REQUIRED_FIELDS = frozenset({"ticker", "date", "open", "high", "low", "close"})
 _REQUIRED_INTRADAY = frozenset({"time"})
-_OPTIONAL_FIELDS = frozenset({"open_interest"})
+_OPTIONAL_FIELDS = frozenset({"volume", "open_interest"})
 
 
 def map_columns(
