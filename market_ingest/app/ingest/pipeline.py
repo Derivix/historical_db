@@ -351,18 +351,34 @@ def _parse_timestamp(
         raise ValueError("Empty date value")
 
     if time_val is not None and _str(time_val):
-        # Combine: "MM/DD/YYYY" + " " + "HH:MM:SS"
-        combined = f"{date_str} {_str(time_val)}"
+        time_str = _str(time_val)
+        combined = f"{date_str} {time_str}"
         fmt = profile.datetime_format
-        # If the format doesn't include time component, append it
+
+        # If the profile format doesn't include time, append a standard time format.
+        # Accept timezone offsets like +05:30 when present in the incoming time value.
         if "%H" not in fmt and "%I" not in fmt:
             fmt = fmt + " %H:%M:%S"
-        dt_naive = datetime.strptime(combined, fmt)
+            if time_str.endswith(("+00:00", "+01:00", "+02:00", "+03:00", "+04:00", "+05:00", "+05:30", "+06:00", "+07:00", "+08:00", "+09:00", "+10:00", "+11:00", "+12:00", "-01:00", "-02:00", "-03:00", "-04:00", "-05:00", "-06:00", "-07:00", "-08:00", "-09:00", "-10:00", "-11:00", "-12:00")):
+                fmt = fmt + "%z"
+        try:
+            dt_naive = datetime.strptime(combined, fmt)
+        except ValueError:
+            if "%z" not in fmt:
+                dt_naive = datetime.strptime(combined, fmt + "%z")
+            else:
+                raise
     else:
         dt_naive = datetime.strptime(date_str, profile.datetime_format)
 
     # Attach source timezone then convert to UTC
-    dt_local = dt_naive.replace(tzinfo=tz_source)
+    if dt_naive.tzinfo is None:
+        dt_local = dt_naive.replace(tzinfo=tz_source)
+    else:
+        dt_local = dt_naive.astimezone(tz_source)
+
+    # Normalize to minute precision for consistent OHLCV bars across providers.
+    dt_local = dt_local.replace(second=0, microsecond=0)
     dt_utc = dt_local.astimezone(timezone.utc)
     return dt_utc
 
