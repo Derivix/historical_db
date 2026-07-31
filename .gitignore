@@ -8,6 +8,8 @@ data
 *.csv
 *.xml
 *.json
+*.xlsx
+*.png
 
 # Python virtual environments
 .venv/
