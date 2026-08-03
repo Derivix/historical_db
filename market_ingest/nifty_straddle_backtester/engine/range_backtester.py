@@ -44,7 +44,7 @@ class AtmStraddleRangeBacktester:
             "Date", "Expiry", "ATM Strike", "Entry Time", "Entry Spot", "CE Entry",
             "PE Entry", "Entry Straddle Value", "Exit Time", "CE Exit", "PE Exit",
             "Exit Straddle Value", "Min Straddle Value", "Min Time",
-            "Max Straddle Value", "Max Time", "Range", "Observations",
+            "Max Straddle Value", "Max Time", "Range", "Daily Target %", "Observations",
         ]
         if not results:
             return pd.DataFrame(columns=columns)
@@ -59,14 +59,40 @@ class AtmStraddleRangeBacktester:
             "observations": "Observations",
         })
         report["Range"] = report["Max Straddle Value"] - report["Min Straddle Value"]
+        report["Daily Target %"] = (
+            (report["Entry Straddle Value"] - report["Min Straddle Value"])
+            / report["Entry Straddle Value"]
+            * 100
+        )
         return report[columns].sort_values("Date").reset_index(drop=True)
+
+    @staticmethod
+    def build_target_summary(report: pd.DataFrame) -> pd.DataFrame:
+        """Average daily straddle decay and derive the requested half-target SL."""
+        if report.empty:
+            return pd.DataFrame(columns=["Trading Days", "Target %", "Stop Loss %"])
+
+        target_pct = float(report["Daily Target %"].mean())
+        return pd.DataFrame([{
+            "Trading Days": len(report),
+            "Target %": target_pct,
+            "Stop Loss %": target_pct / 2,
+        }])
 
     def run_and_export(self) -> tuple[pd.DataFrame, dict[str, Path]]:
         report = self.build_report(self.run())
+        target_summary = self.build_target_summary(report)
         output_dir = Path(self.cfg.output_dir) / "reports"
         output_dir.mkdir(parents=True, exist_ok=True)
         csv_path = output_dir / "daily_atm_straddle_range.csv"
-        xlsx_path = output_dir / "daily_atm_straddle_range.xlsx"
+        # xlsx_path = output_dir / "daily_atm_straddle_range.xlsx"
+        target_csv_path = output_dir / "atm_straddle_target_summary.csv"
+        # target_xlsx_path = output_dir / "atm_straddle_target_summary.xlsx"
         report.to_csv(csv_path, index=False)
-        report.to_excel(xlsx_path, index=False)
-        return report, {"csv": csv_path, "xlsx": xlsx_path}
+        # report.to_excel(xlsx_path, index=False)
+        target_summary.to_csv(target_csv_path, index=False)
+        # target_summary.to_excel(target_xlsx_path, index=False)
+        return report, {
+            "csv": csv_path,
+            "target_csv": target_csv_path,
+        }

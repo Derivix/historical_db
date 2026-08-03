@@ -95,8 +95,10 @@ time it reads NIFTY spot, selects the nearest ATM strike and the nearest
 available expiry, then keeps that **same CE + PE pair** for the rest of the
 session. It reports the date, selected strike, entry and exit CE/PE values,
 and the minimum and maximum combined premium with their timestamps for every
-trading day. It does not place simulated trades, apply stop losses, or shift
-strikes.
+trading day. It also calculates the daily target percentage as
+`(entry_straddle_value - min_straddle_value) / entry_straddle_value * 100`,
+then writes the average target and a stop loss equal to half that target. It
+does not place simulated trades or shift strikes.
 
 ```bash
 python range_main.py \
@@ -107,7 +109,40 @@ python range_main.py \
     --output-dir outputs
 ```
 
-The command writes `outputs/reports/daily_atm_straddle_range.csv` and `.xlsx`.
+The command writes `outputs/reports/daily_atm_straddle_range.csv` and `.xlsx`,
+plus `atm_straddle_target_summary.csv` and `.xlsx`.
+
+## Calibrated 09:22 target / stop-loss backtest
+
+`calibrated_main.py` implements the handwritten fixed-strike short-straddle
+rules. It sells the 09:22 ATM CE + PE, keeps that pair fixed, begins checking
+the combined premium at 09:23, and exits at the first target/SL hit or at
+15:28. It uses the supplied, previously calculated percentages as follows:
+
+```
+target premium = entry CE+PE * (1 - target_pct / 100)
+SL premium     = entry CE+PE * (1 + stop_loss_pct / 100)
+```
+
+Run it with the values produced by the range report:
+
+```bash
+python calibrated_main.py \
+    --dsn "postgresql+psycopg2://user:password@host:5432/market" \
+    --symbol NIFTY --start 2024-01-01 --end 2024-12-31 \
+    --target-pct 12.50 --stop-loss-pct 6.25 --lots 1 \
+    --output-dir outputs
+```
+
+It writes four CSV/XLSX files under `outputs/calibrated_straddle/`:
+
+- `trade_log`: every trade, both leg prices, thresholds, trigger, quantity,
+  gross P&L, charges, and net P&L.
+- `monitor_log`: every monitored minute with CE, PE, combined value, both
+  thresholds, hit flags, and the selected exit row.
+- `summary`: the percentages used, exit counts, and total P&L.
+- `calibration`: populated only when percentages are omitted and the script
+  is asked to calculate them over the supplied date range.
 
 ## Notes on the cost model
 

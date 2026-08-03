@@ -33,9 +33,7 @@ def resolve_atm_strike(spot: float, strike_step: float) -> float:
 
 def resolve_lot_quantity(cfg: BacktestConfig, instrument_lot_size: int = 65) -> int:
     sizing = cfg.sizing
-    # print(type(sizing))
-    lot_size = 65
-    # print(type(lot_size))
+    lot_size = int(instrument_lot_size) if instrument_lot_size else 65
     if sizing.mode == "lots":
         return sizing.lots * lot_size
     if sizing.mode == "fixed_capital":
@@ -109,11 +107,11 @@ def simulate_day(
     strike = resolve_atm_strike(spot_entry, strike_step)
 
     # find the expiry active "today" (nearest weekly/monthly expiry >= day)
-    expiries = repo.list_expiries(underlying_id, str(day), str(day + dt.timedelta(days=45)))
-    expiries = [e for e in expiries if e >= day]
-    if not expiries:
+    expiry = repo.find_nearest_complete_expiry(
+        underlying_id, str(day), str(day + dt.timedelta(days=45)),
+    )
+    if expiry is None:
         return None
-    expiry = min(expiries)
 
 
     ce_inst = repo.get_option_instrument(underlying_id, expiry, strike, "CE")

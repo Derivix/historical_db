@@ -38,6 +38,10 @@ def main():
     )
     report, paths = AtmStraddleRangeBacktester(cfg, MarketDataRepository(args.dsn)).run_and_export()
     print(report.to_string(index=False))
+    if not report.empty:
+        target = report["Daily Target %"].mean()
+        print(f"\nTarget: {target:.2f}%")
+        print(f"Stop loss (target / 2): {target / 2:.2f}%")
     print("\nReports written to:")
     for name, path in paths.items():
         print(f"  {name}: {path}")

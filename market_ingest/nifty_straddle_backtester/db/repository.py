@@ -81,6 +81,39 @@ class MarketDataRepository:
             rows = conn.execute(q, {"uid": underlying_id, "start_date": start_date, "end_date": end_date}).fetchall()
         return [r[0] for r in rows]
 
+    def find_nearest_complete_expiry(
+        self, underlying_id: int, start_date: str, end_date: str,
+    ) -> dt.date | None:
+        """Return the first expiry for which CE and PE instruments exist.
+
+        The range strategy uses only the nearest expiry.  ``LIMIT 1`` avoids
+        materialising every expiry in the 45-day search window on large
+        instrument tables.
+        """
+        q = text("""
+            SELECT ce.expiry
+            FROM instrument AS ce
+            WHERE ce.underlying_id = :uid
+              AND ce.instrument_type = 'CE'
+              AND ce.is_active = TRUE
+              AND ce.expiry BETWEEN CAST(:start_date AS DATE) AND CAST(:end_date AS DATE)
+              AND EXISTS (
+                  SELECT 1
+                  FROM instrument AS pe
+                  WHERE pe.underlying_id = ce.underlying_id
+                    AND pe.instrument_type = 'PE'
+                    AND pe.is_active = TRUE
+                    AND pe.expiry = ce.expiry
+              )
+            ORDER BY ce.expiry
+            LIMIT 1
+        """)
+        with self.engine.connect() as conn:
+            row = conn.execute(q, {
+                "uid": underlying_id, "start_date": start_date, "end_date": end_date,
+            }).first()
+        return row[0] if row else None
+
     def get_option_instrument(
         self, underlying_id: int, expiry: dt.date, strike: float, option_type: str
     ) -> Optional[dict]:
@@ -105,6 +138,23 @@ class MarketDataRepository:
     # OHLCV series
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalise_timestamp_column(df: pd.DataFrame) -> pd.DataFrame:
+        """Return naïve Asia/Kolkata timestamps for either DB timestamp form.
+
+        Some database imports store ``timestamp without time zone`` while
+        others preserve ``timestamp with time zone``.  The former must be
+        localized before conversion; calling ``tz_convert`` directly on it
+        raises the pandas error seen by the backtest runner.
+        """
+        timestamps = pd.to_datetime(df["ts"])
+        if timestamps.dt.tz is None:
+            timestamps = timestamps.dt.tz_localize("Asia/Kolkata")
+        else:
+            timestamps = timestamps.dt.tz_convert("Asia/Kolkata")
+        df["ts"] = timestamps.dt.tz_localize(None)
+        return df
+
     def get_spot_ohlcv(self, instrument_id: int, start_date: str, end_date: str) -> pd.DataFrame:
         # q = text("""
         #     SELECT ts, open, high, low, close, volume
@@ -123,8 +173,7 @@ class MarketDataRepository:
         """)
         with self.engine.connect() as conn:
             df = pd.read_sql(q, conn, params={"iid": instrument_id, "start_date": start_date, "end_date": end_date})
-        df["ts"] = pd.to_datetime(df["ts"]).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-        return df
+        return self._normalise_timestamp_column(df)
 
     def get_option_ohlcv(self, instrument_id: int, day: dt.date) -> pd.DataFrame:
         # q = text("""
@@ -144,8 +193,7 @@ class MarketDataRepository:
         """)
         with self.engine.connect() as conn:
             df = pd.read_sql(q, conn, params={"iid": instrument_id, "day": day})
-        df["ts"] = pd.to_datetime(df["ts"]).dt.tz_convert("Asia/Kolkata").dt.tz_localize(None)
-        return df
+        return self._normalise_timestamp_column(df)
 
     def get_trading_days(self, instrument_id: int, start_date: str, end_date: str) -> list[dt.date]:
         # q = text("""

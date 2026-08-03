@@ -7,6 +7,7 @@ Supports both CSV and XLSX.  Processes data in configurable batches.
 from __future__ import annotations
 
 import zoneinfo
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -15,14 +16,16 @@ from typing import Any
 import polars as pl
 import structlog
 
-from app.config import ColumnMapProfile, Settings, get_settings, load_profile
+import app.config as config
+from app.config import ColumnMapProfile, Settings, get_settings
 from app.db.connection import get_connection
 from app.db import dao
 from app.ingest.column_mapper import map_columns, ColumnMapError
 from app.ingest.reader import read_file_batches
 from app.ingest.ticker_parser import (
-    parse_ticker, infer_underlying_kind, TickerParseError
+    infer_underlying_kind, TickerParseError
 )
+from app.ingest.adapters import resolve_instrument, source_features
 from app.ingest.validator import validate_batch, RejectReport
 
 logger = structlog.get_logger(__name__)
@@ -119,7 +122,7 @@ def ingest_file(
         settings = get_settings()
 
     pname = profile_name or settings.ingest.default_profile
-    profile = load_profile(pname, settings.ingest.profiles_dir)
+    profile = config.load_profile(pname, settings.ingest.profiles_dir)
     result = IngestResult()
     result.files_processed = 1
 
@@ -173,8 +176,8 @@ def ingest_file(
                 result.rows_read += 1
                 row = batch_df.row(row_idx, named=True)
 
-                raw_ticker = _str(row.get(col_ticker))
-                if not raw_ticker:
+                source_id = _str(row.get(col_ticker))
+                if not source_id:
                     continue
 
                 # Parse timestamp
@@ -185,7 +188,7 @@ def ingest_file(
                     )
                 except Exception as exc:
                     result.reject_report.add_reject_simple(
-                        row_counter, raw_ticker, str(row.get(col_date)), f"Bad timestamp: {exc}"
+                        row_counter, source_id, str(row.get(col_date)), f"Bad timestamp: {exc}"
                     )
                     result.rows_rejected += 1
                     if strict:
@@ -210,7 +213,7 @@ def ingest_file(
                 from app.ingest.validator import validate_row, RowReject
                 ok = validate_row(
                     row_index=row_counter,
-                    raw_ticker=raw_ticker,
+                    raw_ticker=source_id,
                     ts=ts_utc,
                     open_=open_,
                     high=high,
@@ -225,12 +228,12 @@ def ingest_file(
                     result.rows_rejected += 1
                     continue
 
-                # Parse ticker → instrument
+                # Resolve the provider identifier into a database instrument.
                 try:
-                    parsed = parse_ticker(raw_ticker)
+                    raw_ticker, parsed = resolve_instrument(row, mapping, profile, ts_utc)
                 except TickerParseError as exc:
                     result.reject_report.add_reject_simple(
-                        row_counter, raw_ticker, str(ts_utc), f"TickerParseError: {exc}"
+                        row_counter, source_id, str(ts_utc), f"TickerParseError: {exc}"
                     )
                     result.rows_rejected += 1
                     continue
@@ -274,10 +277,20 @@ def ingest_file(
                     "open_interest": oi,
                 })
 
+                if profile.adapter is not None:
+                    ohlcv_rows[-1]["features"] = source_features(row, mapping)
+
             if ohlcv_rows:
                 inserted = dao.copy_ohlcv_rows(conn, ohlcv_rows)
                 conn.commit()
                 result.rows_inserted += inserted
+                feature_rows = [
+                    {"instrument_id": row["instrument_id"], "ts": row["ts"], **row["features"]}
+                    for row in ohlcv_rows if "features" in row
+                ]
+                if feature_rows:
+                    dao.copy_feature_rows(conn, feature_rows)
+                    conn.commit()
                 logger.info(
                     "batch_loaded",
                     file=str(file_path),
@@ -352,6 +365,10 @@ def _parse_timestamp(
 
     if time_val is not None and _str(time_val):
         time_str = _str(time_val)
+        # Python's %z accepts +00:00 and +0000, while several providers emit
+        # the compact UTC suffix +00.  Expand the latter before parsing.
+        if re.search(r"[+-]\d{2}$", time_str):
+            time_str += "00"
         combined = f"{date_str} {time_str}"
         fmt = profile.datetime_format
 

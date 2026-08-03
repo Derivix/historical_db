@@ -1,0 +1,43 @@
+granularity: intraday
+timezone: "Asia/Kolkata"
+datetime_format: "%Y-%m-%d"
+adapter:
+  name: option_snapshot
+  underlying_symbol: NIFTY
+  exchange: NFO
+  expiry_days_per_year: 365.0
+column_map:
+  ticker:
+    - instrument_key
+  date:
+    - date
+  time:
+    - time
+  open:
+    - open
+  high:
+    - high
+  low:
+    - low
+  close:
+    - close
+  volume:
+    - volume
+  open_interest:
+    - oi
+  strike:
+    - strike
+  option_type:
+    - opt_type
+  time_to_expiry:
+    - tte
+  iv:
+    - iv
+  delta:
+    - delta
+  gamma:
+    - gamma
+  theta:
+    - theta
+  vega:
+    - vega

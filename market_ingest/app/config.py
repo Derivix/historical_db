@@ -127,12 +127,22 @@ class Settings(BaseSettings):
 # Profile models
 # ---------------------------------------------------------------------------
 
+class SourceAdapterProfile(BaseModel):
+    """Optional source-specific normalisation used before database writes."""
+
+    name: str
+    underlying_symbol: str | None = None
+    exchange: str = "NFO"
+    expiry_days_per_year: float = 365.0
+
+
 class ColumnMapProfile(BaseModel):
     """Describes how source column headers map to canonical field names."""
     granularity: str = "intraday"   # "intraday" | "daily"
     timezone: str = "Asia/Kolkata"
     datetime_format: str = "%m/%d/%Y %H:%M:%S"
     column_map: dict[str, list[str]] = Field(default_factory=dict)
+    adapter: SourceAdapterProfile | None = None
 
     @field_validator("granularity")
     @classmethod

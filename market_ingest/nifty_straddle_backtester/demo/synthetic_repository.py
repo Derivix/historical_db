@@ -59,6 +59,10 @@ class SyntheticMarketDataRepository:
         days = pd.date_range(start, end, freq="W-THU").date.tolist()
         return days if days else [end]
 
+    def find_nearest_complete_expiry(self, underlying_id, start_date, end_date):
+        expiries = self.list_expiries(underlying_id, start_date, end_date)
+        return min(expiries) if expiries else None
+
     # -- OHLCV ------------------------------------------------------------
     def _build_spot_paths(self):
         for day in self.trading_days:

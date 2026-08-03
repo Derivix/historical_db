@@ -78,11 +78,11 @@ def measure_daily_atm_straddle_range(
     entry_spot = float(entry_spot_candle["close"])
     strike = resolve_atm_strike(entry_spot, strike_step)
 
-    expiries = repo.list_expiries(underlying_id, str(day), str(day + dt.timedelta(days=45)))
-    expiries = [expiry for expiry in expiries if expiry >= day]
-    if not expiries:
+    expiry = repo.find_nearest_complete_expiry(
+        underlying_id, str(day), str(day + dt.timedelta(days=45)),
+    )
+    if expiry is None:
         return None
-    expiry = min(expiries)
 
     ce_inst = repo.get_option_instrument(underlying_id, expiry, strike, "CE")
     pe_inst = repo.get_option_instrument(underlying_id, expiry, strike, "PE")
