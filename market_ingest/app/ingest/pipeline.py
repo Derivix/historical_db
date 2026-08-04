@@ -73,7 +73,7 @@ def ingest_path(
     settings: Settings | None = None,
 ) -> IngestResult:
     """
-    Ingest one file or all CSV/XLSX files in a directory.
+    Ingest one file or all CSV/XLSX/pickle files in a directory.
 
     Parameters
     ----------
@@ -92,7 +92,13 @@ def ingest_path(
 
     p = Path(path)
     if p.is_dir():
-        files = list(p.glob("*.csv")) + list(p.glob("*.xlsx")) + list(p.glob("*.xls"))
+        files = (
+            list(p.glob("*.csv"))
+            + list(p.glob("*.xlsx"))
+            + list(p.glob("*.xls"))
+            + list(p.glob("*.pkl"))
+            + list(p.glob("*.pickle"))
+        )
     elif p.is_file():
         files = [p]
     else:
@@ -386,7 +392,7 @@ def _parse_timestamp(
             else:
                 raise
     else:
-        dt_naive = datetime.strptime(date_str, profile.datetime_format)
+        dt_naive = _parse_datetime_value(date_str, profile.datetime_format)
 
     # Attach source timezone then convert to UTC
     if dt_naive.tzinfo is None:
@@ -405,5 +411,37 @@ from app.ingest.validator import RejectReport, RowReject  # noqa: E402
 
 def _add_reject_simple(self: RejectReport, row_index: int, raw_ticker: str, ts: str, reason: str) -> None:
     self.add(RowReject(row_index=row_index, raw_ticker=raw_ticker, ts=ts, reason=reason, raw_values={}))
+
+
+def _parse_datetime_value(value: str, default_format: str) -> datetime:
+    """Parse a date or combined datetime string using a small set of common formats."""
+    candidates = [default_format]
+    if "%H" not in default_format and "%I" not in default_format:
+        candidates.append(default_format + " %H:%M:%S")
+    candidates.extend([
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%d/%m/%Y %H:%M:%S",
+        "%d/%m/%Y %H:%M",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+        "%d/%m/%Y",
+    ])
+    for fmt in candidates:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"Unsupported datetime value {value!r}") from exc
+
 
 RejectReport.add_reject_simple = _add_reject_simple  # type: ignore[attr-defined]

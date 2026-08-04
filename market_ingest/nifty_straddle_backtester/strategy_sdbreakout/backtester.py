@@ -13,14 +13,14 @@ from engine.costs import compute_leg_cost
 
 @dataclass(frozen=True)
 class SDBreakoutConfig:
-    entry_time: dt.time = dt.time(9, 22)
+    entry_time: dt.time = dt.time(10, 2)
     exit_time: dt.time = dt.time(15, 15)
-    initial_premium: float = 20.0
-    adjustment_premium: float = 60.0
+    initial_premium: float = 35.0
+    adjustment_premium: float = 180.0
     replacement_target_pct: float = 60.0
-    replacement_stop_pct: float = 30.0
-    portfolio_loss_limit: float = 3_000.0
-    strike_search_steps: int = 30
+    replacement_stop_pct: float = 40.0
+    portfolio_loss_limit: float = 4_000.0
+    strike_search_steps: int = 50
     lots: int = 1
     allowed_dte: tuple[int, ...] | None = None
     min_dte: int | None = None
@@ -53,6 +53,19 @@ def _last_price(frame: pd.DataFrame, when: dt.datetime) -> float | None:
     """Last available close at ``when`` using a fast sorted timestamp lookup."""
     index = int(frame["ts"].searchsorted(when, side="right")) - 1
     return None if index < 0 else float(frame["close"].iloc[index])
+
+
+def _max_drawdown(net_pnl: pd.Series) -> float:
+    """Return the worst peak-to-trough drawdown of a chronological P&L series.
+
+    The value is zero or negative.  The initial account peak is treated as
+    zero, so a strategy that begins with a loss reports that loss as drawdown.
+    """
+    if net_pnl.empty:
+        return 0.0
+    equity = net_pnl.astype(float).cumsum()
+    running_peak = equity.cummax().clip(lower=0.0)
+    return float((equity - running_peak).min())
 
 
 class SDBreakoutBacktester:
@@ -320,6 +333,7 @@ class SDBreakoutBacktester:
                 "charges": float(subset["charges"].sum()) if not subset.empty else 0.0,
                 "win_rate_pct": float((subset["net_pnl"] > 0).mean() * 100) if not subset.empty else 0.0,
                 "max_daily_loss": float(subset["net_pnl"].min()) if not subset.empty else 0.0,
+                "max_drawdown": _max_drawdown(subset["net_pnl"]) if not subset.empty else 0.0,
                 "adjustments": int((subset["adjustment_reason"] != "none").sum()) if not subset.empty else 0,
             })
         evaluation = pd.DataFrame(parameter_rows).sort_values("net_pnl", ascending=False).reset_index(drop=True)
@@ -346,16 +360,18 @@ class SDBreakoutBacktester:
         best_daily = log[log["trigger_pct"] == best_trigger].sort_values("date").copy()
         best_daily.insert(0, "running_net_pnl", best_daily["net_pnl"].cumsum())
         best_daily.insert(1, "trade_number", range(1, len(best_daily) + 1))
+        best_daily.insert(2, "running_peak_net_pnl", best_daily["running_net_pnl"].cummax().clip(lower=0.0))
+        best_daily.insert(3, "drawdown", best_daily["running_net_pnl"] - best_daily["running_peak_net_pnl"])
 
         monthly = best_daily.assign(month=pd.to_datetime(best_daily["date"]).dt.to_period("M").astype(str)).groupby("month", as_index=False).agg(
             trades=("date", "size"), net_pnl=("net_pnl", "sum"), gross_pnl=("gross_pnl", "sum"),
             charges=("charges", "sum"), win_rate_pct=("net_pnl", lambda values: (values > 0).mean() * 100),
-            worst_day_pnl=("net_pnl", "min"), best_day_pnl=("net_pnl", "max"),
+            worst_day_pnl=("net_pnl", "min"), best_day_pnl=("net_pnl", "max"), max_drawdown=("net_pnl", _max_drawdown),
         )
         dte = best_daily.groupby("dte", as_index=False).agg(
             trades=("date", "size"), net_pnl=("net_pnl", "sum"), gross_pnl=("gross_pnl", "sum"),
             charges=("charges", "sum"), win_rate_pct=("net_pnl", lambda values: (values > 0).mean() * 100),
-            worst_day_pnl=("net_pnl", "min"), best_day_pnl=("net_pnl", "max"),
+            worst_day_pnl=("net_pnl", "min"), best_day_pnl=("net_pnl", "max"), max_drawdown=("net_pnl", _max_drawdown),
         )
         dte["dte_days"] = dte["dte"].str.replace("DT", "", regex=False).astype(int)
         dte = dte.sort_values("dte_days").drop(columns="dte_days")

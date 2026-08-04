@@ -1,14 +1,16 @@
 """
-Batched file reader using polars for CSV and polars/pandas for XLSX.
+Batched file reader using polars for CSV, Excel, and pickle-backed DataFrames.
 
 Returns an iterator of polars DataFrames (one per batch).
 
 For CSV: uses polars LazyFrame + streaming collect in batches.
 For XLSX: loads the whole file (no streaming API), then chunks into batches.
+For pickle: loads a pandas DataFrame or Series from disk and converts it to polars.
 """
 from __future__ import annotations
 
 import math
+import pickle
 from pathlib import Path
 from typing import Iterator
 
@@ -17,7 +19,7 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-_SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+_SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls", ".pkl", ".pickle"}
 
 
 def read_file_batches(
@@ -46,8 +48,12 @@ def read_file_batches(
 
     if ext == ".csv":
         yield from _read_csv_batches(path, batch_size)
-    else:
+    elif ext in {".xlsx", ".xls"}:
         yield from _read_excel_batches(path, batch_size)
+    elif ext in {".pkl", ".pickle"}:
+        yield from _read_pickle_batches(path, batch_size)
+    else:
+        raise ValueError(f"Unsupported file extension {ext!r}. Supported: {_SUPPORTED_EXTENSIONS}")
 
 
 # ---------------------------------------------------------------------------
@@ -127,11 +133,51 @@ def _load_excel(path: Path) -> pl.DataFrame:
         ) from pandas_exc
 
 
+def _read_pickle_batches(path: Path, batch_size: int) -> Iterator[pl.DataFrame]:
+    """Load a pickle file containing a pandas DataFrame/Series and yield batched polars DataFrames."""
+    try:
+        with path.open("rb") as handle:
+            obj = pickle.load(handle)
+    except Exception as exc:
+        logger.error("pickle_read_error", path=str(path), error=str(exc))
+        raise
+
+    if hasattr(obj, "to_pandas"):
+        pdf = obj.to_pandas()
+    elif hasattr(obj, "to_frame") and not hasattr(obj, "columns"):
+        pdf = obj.to_frame()
+    elif hasattr(obj, "columns"):
+        pdf = obj
+    else:
+        raise TypeError(f"Unsupported pickle object type: {type(obj)!r}")
+
+    if hasattr(pdf, "columns"):
+        try:
+            df = pl.from_pandas(pdf)
+        except ImportError:
+            columns = {col: pdf[col].astype(str).to_list() for col in pdf.columns}
+            df = pl.DataFrame(columns)
+        df = df.with_columns([pl.col(c).cast(pl.Utf8) for c in df.columns])
+    else:
+        raise TypeError(f"Unsupported pickle content type: {type(pdf)!r}")
+
+    total = len(df)
+    num_batches = max(1, math.ceil(total / batch_size))
+    logger.info("pickle_loaded", path=str(path), total_rows=total, batches=num_batches)
+
+    for i in range(num_batches):
+        start = i * batch_size
+        end = min(start + batch_size, total)
+        yield df.slice(start, end - start)
+
+
 def detect_file_type(path: str | Path) -> str:
-    """Return 'csv' or 'excel' based on file extension."""
+    """Return 'csv', 'excel', or 'pickle' based on file extension."""
     ext = Path(path).suffix.lower()
     if ext == ".csv":
         return "csv"
     if ext in (".xlsx", ".xls"):
         return "excel"
+    if ext in {".pkl", ".pickle"}:
+        return "pickle"
     raise ValueError(f"Unknown file type for extension {ext!r}")

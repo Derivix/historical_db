@@ -51,7 +51,7 @@ def migrate(
 
 @app.command()
 def ingest(
-    path: str = typer.Argument(..., help="Path to a CSV/XLSX file or directory"),
+    path: str = typer.Argument(..., help="Path to a CSV/XLSX/pickle file or directory"),
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Source profile name"),
     strict: bool = typer.Option(False, "--strict", help="Abort on first row validation error"),
 ) -> None:
@@ -134,7 +134,7 @@ def audit(
 
 @app.command(name="all")
 def run_all(
-    path: str = typer.Argument(..., help="Path to a CSV/XLSX file or directory"),
+    path: str = typer.Argument(..., help="Path to a CSV/XLSX/pickle file or directory"),
     profile: Optional[str] = typer.Option(None, "--profile", "-p", help="Source profile name"),
     strict: bool = typer.Option(False, "--strict", help="Abort on first row validation error"),
     method: str = typer.Option("OFFSET", "--method", "-m", help="Selection method"),

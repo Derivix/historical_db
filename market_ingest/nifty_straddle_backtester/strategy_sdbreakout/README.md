@@ -81,9 +81,11 @@ directional driver; exit reason; gross P&L; charges; and net P&L.
 
 `outputs/strategy_sdbreakout/evaluation_parameters.csv` contains one ranked
 row per trigger. It is sorted by net P&L, with `is_best_trigger=True` on the
-maximum-profit trigger.
+maximum-profit trigger. It includes `max_drawdown` (zero or negative) as the
+worst cumulative net-P&L peak-to-trough decline for that trigger.
 
 For quicker review, `outputs/strategy_sdbreakout/review/` contains a filtered
 Excel workbook (`sd_breakout_review.xlsx`) and matching CSV files for the best
 trigger's daily results, monthly summary, DTE summary, and the top 20 triggers.
 The workbook has one tab per view, frozen headers, filters, and fitted columns.
+The best daily results also include running P&L and drawdown columns.

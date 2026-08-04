@@ -18,6 +18,10 @@ column_map:
     - trading_date
     - bar_date
     - dt
+    - date time
+    - date_time
+    - datetime
+    - date-time
   time:
     - time
     - trade_time
