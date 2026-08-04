@@ -1,1 +1,1 @@
-"""Isolated implementation of the 1DT short-premium breakout strategy."""
+"""Isolated implementation of the daily short-premium breakout strategy."""

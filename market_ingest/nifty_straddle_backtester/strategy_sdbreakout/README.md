@@ -1,7 +1,9 @@
-# 1DT directional premium-breakout backtest
+# Daily directional premium-breakout backtest
 
-An isolated backtest for the 09:22 NIFTY short-option strategy. It uses only
-contracts where `expiry - trade date = 1 day`, shown in reports as `1DT`.
+An isolated backtest for the 09:22 NIFTY short-option strategy. It tests the
+rules on every available trading day, using that day's nearest complete expiry.
+The resulting days-to-expiry remain visible in the reports as `dte` (for
+example, `0DT`, `1DT`, or `2DT`).
 
 ## Rules
 
@@ -45,17 +47,43 @@ python -m strategy_sdbreakout.main `
 Optional controls: `--lots`, `--strike-search-steps`, `--disable-costs`, and
 `--output-dir`. Use identical start/end values to run one trigger only.
 
+### DTE selection
+
+By default, the strategy trades every trading day using its nearest complete
+expiry. Use one or both of these filters to control the expiry days tested:
+
+```powershell
+# Explicitly select every available trading day (any DTE)
+--all-days
+
+# Exact DTE values only (for example, expiry day, 1DTE, and 3DTE)
+--dte 0,1,3
+
+# An inclusive DTE range
+--min-dte 0 --max-dte 2
+```
+
+When both are supplied, a day must pass both filters. For example,
+`--dte 0,1,3 --min-dte 1 --max-dte 2` trades only `1DT`.
+`--all-days` cannot be combined with a DTE filter.
+
 Spot, expiry, option-instrument, and intraday option-price data are cached for
-the lifetime of the sweep. The database is therefore read only once per needed
-contract/day, rather than once per trigger value.
+all trigger values for a given day. Each day is then released before the next
+one is processed, keeping long all-days sweeps from accumulating the entire
+date range in memory. The CLI prints the current trading day as it runs.
 
 ## Outputs
 
-`outputs/strategy_sdbreakout/trade_log.csv` contains every executed 1DT day
-for every trigger. It includes the daily open of spot, CE, and PE; replacement
-entry and exit timestamps; replacement open; directional driver; exit reason;
-gross P&L; charges; and net P&L.
+`outputs/strategy_sdbreakout/trade_log.csv` remains the complete audit log:
+every executed trading day for every trigger. It includes the daily open of
+spot, CE, and PE; replacement entry and exit timestamps; replacement open;
+directional driver; exit reason; gross P&L; charges; and net P&L.
 
 `outputs/strategy_sdbreakout/evaluation_parameters.csv` contains one ranked
 row per trigger. It is sorted by net P&L, with `is_best_trigger=True` on the
 maximum-profit trigger.
+
+For quicker review, `outputs/strategy_sdbreakout/review/` contains a filtered
+Excel workbook (`sd_breakout_review.xlsx`) and matching CSV files for the best
+trigger's daily results, monthly summary, DTE summary, and the top 20 triggers.
+The workbook has one tab per view, frozen headers, filters, and fitted columns.

@@ -134,6 +134,49 @@ class MarketDataRepository:
             }).mappings().first()
         return dict(row) if row else None
 
+    def get_option_candidates_at(
+        self,
+        underlying_id: int,
+        expiry: dt.date,
+        option_type: str,
+        min_strike: float,
+        max_strike: float,
+        day: dt.date,
+        when: dt.datetime,
+    ) -> list[dict]:
+        """Return option candidates with their last price at ``when``.
+
+        This avoids opening one database connection for every strike while a
+        strategy searches for a premium.  The lateral lookup is backward-only,
+        so it preserves the no-look-ahead behaviour of the backtester.
+        """
+        q = text("""
+            SELECT i.instrument_id, i.raw_ticker, i.lot_size, i.strike, px.close AS price
+            FROM instrument AS i
+            JOIN LATERAL (
+                SELECT o.close
+                FROM ohlcv AS o
+                WHERE o.instrument_id = i.instrument_id
+                  AND o.ts >= CAST(:day AS DATE)
+                  AND o.ts <= :when
+                ORDER BY o.ts DESC
+                LIMIT 1
+            ) AS px ON TRUE
+            WHERE i.underlying_id = :uid
+              AND i.instrument_type = :otype
+              AND i.expiry = :expiry
+              AND i.is_active = TRUE
+              AND i.strike BETWEEN :min_strike AND :max_strike
+            ORDER BY i.strike
+        """)
+        with self.engine.connect() as conn:
+            rows = conn.execute(q, {
+                "uid": underlying_id, "otype": option_type, "expiry": expiry,
+                "min_strike": min_strike, "max_strike": max_strike,
+                "day": day, "when": when,
+            }).mappings().all()
+        return [dict(row) for row in rows]
+
     # ------------------------------------------------------------------
     # OHLCV series
     # ------------------------------------------------------------------
