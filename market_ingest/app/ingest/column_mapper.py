@@ -70,6 +70,12 @@ _REQUIRED_INTRADAY = frozenset({"time"})
 _OPTIONAL_FIELDS = frozenset({"volume", "open_interest"})
 
 
+def _is_combined_datetime_header(header: str) -> bool:
+    """Return whether a date column header represents a full date-time value."""
+    normalised = " ".join(header.strip().lower().replace("_", " ").replace("-", " ").split())
+    return normalised in {"date time", "datetime", "timestamp", "date and time"}
+
+
 def map_columns(
     source_headers: Sequence[str],
     profile: ColumnMapProfile,
@@ -133,6 +139,14 @@ def map_columns(
     required = set(_REQUIRED_FIELDS)
     if profile.granularity == "intraday":
         required |= _REQUIRED_INTRADAY
+
+        # Intraday sources may provide one combined timestamp column instead
+        # of separate date and time columns.  The pipeline already parses a
+        # full datetime value from the mapped date column when no time column
+        # is present, so do not reject this valid layout at the mapping stage.
+        date_source = result.get("date")
+        if date_source and _is_combined_datetime_header(date_source):
+            required.discard("time")
 
     missing = required - set(result.field_to_source.keys())
     if missing:

@@ -102,6 +102,15 @@ class TestHappyPath:
         result = map_columns(headers, profile)
         assert result.get("time") is None
 
+    def test_intraday_combined_datetime_column_satisfies_time_requirement(self):
+        profile = _make_profile(extra={"date": ["date", "date time"]})
+        headers = ["Ticker", "Date Time", "Open", "High", "Low", "Close", "Volume"]
+
+        result = map_columns(headers, profile)
+
+        assert result.get("date") == "Date Time"
+        assert result.get("time") is None
+
     def test_gfd_profile_open_interest_with_space(self):
         profile = ColumnMapProfile(
             granularity="intraday",
