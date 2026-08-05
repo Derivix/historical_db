@@ -1,19 +1,21 @@
 # Daily directional premium-breakout backtest
 
-An isolated backtest for the 09:22 NIFTY short-option strategy. It tests the
+An isolated backtest for the NIFTY short-option strategy. It tests the
 rules on every available trading day, using that day's nearest complete expiry.
 The resulting days-to-expiry remain visible in the reports as `dte` (for
 example, `0DT`, `1DT`, or `2DT`).
 
 ## Rules
 
-1. **09:22 entry** — sell one CE and one PE whose premiums are each closest
-   to ₹20. The legs are selected independently by premium.
-2. **Monitor the combined premium** from 09:23 through 15:15. The adjustment
-   trigger is `initial combined premium × (1 + trigger %)`. The CLI sweeps
+1. **Entry** — sell one CE and one PE whose premiums are each closest to
+   `initial_premium`. The legs are selected independently by premium.
+2. **Monitor a separate, non-traded straddle** from the minute after entry
+   through 15:15. Its CE and PE are each selected near
+   `trigger_straddle_premium` (₹30 by default). The adjustment trigger is
+   `monitoring combined premium at entry × (1 + trigger %)`. The CLI sweeps
    every whole-number trigger from 3% through 200% by default.
 3. **At the trigger**, buy back both initial legs. Determine the driver
-   by comparing the CE and PE percentage increases from their own 09:22 entry:
+   by comparing the monitoring CE and PE percentage increases from entry:
    - PE increased more: the market is treated as moving down; sell the CE
      whose current premium is closest to ₹60.
    - CE increased more: the market is treated as moving up; sell the PE
@@ -46,6 +48,31 @@ python -m strategy_sdbreakout.main `
 
 Optional controls: `--lots`, `--strike-search-steps`, `--disable-costs`, and
 `--output-dir`. Use identical start/end values to run one trigger only.
+
+### Full parameter sweep
+
+In addition to the trigger range, pass comma-separated grids for any
+`SDBreakoutConfig` values you want to vary. Omitted values retain their normal
+defaults. For example, this evaluates 2 entry times × 2 initial premiums × 2
+monitoring premiums × 2 adjustment premiums × 3 triggers = 48
+configuration/trigger combinations:
+
+```powershell
+python -m strategy_sdbreakout.main `
+  --dsn "postgresql+psycopg2://USER:PASSWORD@HOST:5432/DATABASE" `
+  --start 2024-01-01 --end 2024-12-31 `
+  --entry-times 09:22,10:02 `
+  --initial-premiums 25,35 `
+  --trigger-straddle-premiums 25,30 `
+  --adjustment-premiums 120,180 `
+  --trigger-start 10 --trigger-end 50 --trigger-step 20
+```
+
+The combined results are written to
+`outputs/strategy_sdbreakout/parameter_sweep/evaluation_parameters.csv` and
+are ranked by net P&L (then lower drawdown). Treat the ranking as in-sample
+research: validate a short list of stable candidates on a separate date range
+before choosing one for live use.
 
 ### DTE selection
 

@@ -2,57 +2,13 @@
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from pathlib import Path
 
 import pandas as pd
-
-from config.settings import CostConfig
 from engine.costs import compute_leg_cost
-
-
-@dataclass(frozen=True)
-class SDBreakoutConfig:
-    entry_time: dt.time = dt.time(10, 2)
-    exit_time: dt.time = dt.time(15, 15)
-    initial_premium: float = 35.0
-    adjustment_premium: float = 180.0
-    replacement_target_pct: float = 60.0
-    replacement_stop_pct: float = 40.0
-    portfolio_loss_limit: float = 4_000.0
-    strike_search_steps: int = 50
-    lots: int = 1
-    allowed_dte: tuple[int, ...] | None = None
-    min_dte: int | None = None
-    max_dte: int | None = None
-    costs: CostConfig = CostConfig()
-
-
-@dataclass
-class _Leg:
-    option_type: str
-    instrument_id: int
-    ticker: str
-    strike: float
-    entry_time: dt.datetime
-    entry_price: float
-    quantity: int
-    prices: pd.DataFrame
-    exit_time: dt.datetime | None = None
-    exit_price: float | None = None
-
-    def close(self, when: dt.datetime, price: float) -> None:
-        self.exit_time, self.exit_price = when, float(price)
-
-    @property
-    def gross_pnl(self) -> float:
-        return 0.0 if self.exit_price is None else (self.entry_price - self.exit_price) * self.quantity
-
-
-def _last_price(frame: pd.DataFrame, when: dt.datetime) -> float | None:
-    """Last available close at ``when`` using a fast sorted timestamp lookup."""
-    index = int(frame["ts"].searchsorted(when, side="right")) - 1
-    return None if index < 0 else float(frame["close"].iloc[index])
+from utils.premium_selection import _premium_close_to
+from utils.datatype import SDBreakoutConfig, _Leg, _last_price, _max_drawdown
 
 
 def _max_drawdown(net_pnl: pd.Series) -> float:
@@ -113,59 +69,7 @@ class SDBreakoutBacktester:
             ).sort_values("ts")
         return self._spot_cache[day]
 
-    def _candidate_strikes(self, spot: float) -> list[float]:
-        center = round(spot / self.strike_step) * self.strike_step
-        return [round(center + offset * self.strike_step, 2) for offset in range(-self.cfg.strike_search_steps, self.cfg.strike_search_steps + 1)]
-
-    def _option_data(self, expiry: dt.date, strike: float, option_type: str, day: dt.date):
-        key = (expiry, strike, option_type, day)
-        if key not in self._option_cache:
-            instrument = self.repo.get_option_instrument(self.underlying_id, expiry, strike, option_type)
-            if instrument is None:
-                self._option_cache[key] = None
-            else:
-                prices = self.repo.get_option_ohlcv(instrument["instrument_id"], day).sort_values("ts")
-                self._option_cache[key] = None if prices.empty else (instrument, prices)
-        return self._option_cache[key]
-
-    def _select_by_premium(self, day: dt.date, expiry: dt.date, option_type: str, when: dt.datetime, spot: float, target: float) -> _Leg | None:
-        # The SQL repository can return the full nearby chain and its prices in
-        # one query.  Keep the per-strike fallback for lightweight/demo repos.
-        candidate_lookup = getattr(self.repo, "get_option_candidates_at", None)
-        if candidate_lookup is not None:
-            strikes = self._candidate_strikes(spot)
-            candidates = candidate_lookup(
-                self.underlying_id, expiry, option_type, min(strikes), max(strikes), day, when,
-            )
-            if candidates:
-                candidate = min(
-                    (row for row in candidates if row["price"] is not None and float(row["price"]) > 0),
-                    key=lambda row: abs(float(row["price"]) - target), default=None,
-                )
-                if candidate is not None:
-                    found = self._option_data(expiry, float(candidate["strike"]), option_type, day)
-                    if found is not None:
-                        instrument, prices = found
-                        price = _last_price(prices, when)
-                        if price is not None and price > 0:
-                            quantity = self.cfg.lots * int(instrument.get("lot_size") or 65)
-                            return _Leg(option_type, instrument["instrument_id"], instrument.get("raw_ticker", ""), float(candidate["strike"]), when, price, quantity, prices)
-
-        best: tuple[float, _Leg] | None = None
-        for strike in self._candidate_strikes(spot):
-            found = self._option_data(expiry, strike, option_type, day)
-            if found is None:
-                continue
-            instrument, prices = found
-            price = _last_price(prices, when)
-            if price is None or price <= 0:
-                continue
-            quantity = self.cfg.lots * int(instrument.get("lot_size") or 65)
-            leg = _Leg(option_type, instrument["instrument_id"], instrument.get("raw_ticker", ""), strike, when, price, quantity, prices)
-            candidate = (abs(price - target), leg)
-            if best is None or candidate[0] < best[0]:
-                best = candidate
-        return None if best is None else best[1]
+    
 
     @staticmethod
     def _price(leg: _Leg, when: dt.datetime) -> float | None:
@@ -192,14 +96,40 @@ class SDBreakoutBacktester:
         entry_spot = _last_price(session, entry_dt)
         if entry_spot is None:
             return None
-        ce = self._select_by_premium(day, expiry, "CE", entry_dt, entry_spot, self.cfg.initial_premium)
-        pe = self._select_by_premium(day, expiry, "PE", entry_dt, entry_spot, self.cfg.initial_premium)
-        if ce is None or pe is None:
+        ce = _premium_close_to(
+            self.repo, 
+            self._option_cache, 
+            self.underlying_id, 
+            day, 
+            expiry, 
+            "CE",
+            entry_dt, 
+            entry_spot, 
+            self.cfg.initial_premium, 
+            self.cfg.strike_step, 
+            self.cfg
+            )
+        pe = _premium_close_to(
+            self.repo, 
+            self._option_cache, 
+            self.underlying_id, 
+            day, expiry, 
+            "PE", 
+            entry_dt, 
+            entry_spot, 
+            self.cfg.initial_premium, 
+            self.cfg.strike_step, 
+            self.cfg
+            )
+        monitor_ce = _premium_close_to(self.repo, self._option_cache, self.underlying_id, day, expiry, "CE", entry_dt, entry_spot, self.cfg.trigger_straddle_premium, self.cfg.strike_step, self.cfg)
+        monitor_pe = _premium_close_to(self.repo, self._option_cache, self.underlying_id, day, expiry, "PE", entry_dt, entry_spot, self.cfg.trigger_straddle_premium, self.cfg.strike_step, self.cfg)
+        if ce is None or pe is None or monitor_ce is None or monitor_pe is None:
             return None
         initial = [ce, pe]
         all_legs = [ce, pe]
         initial_value = ce.entry_price + pe.entry_price
-        up_trigger = initial_value * (1 + trigger_pct / 100)
+        monitor_initial_value = monitor_ce.entry_price + monitor_pe.entry_price
+        up_trigger = monitor_initial_value * (1 + trigger_pct / 100)
         replacement: _Leg | None = None
         adjustment_reason = "none"
         directional_driver = ""
@@ -210,25 +140,31 @@ class SDBreakoutBacktester:
         for _, row in session[session["ts"] > entry_dt].iterrows():
             when, spot_px = row["ts"], float(row["close"])
             if replacement is None:
-                ce_px, pe_px = self._price(ce, when), self._price(pe, when)
-                if ce_px is None or pe_px is None:
+                monitor_ce_px = self._price(monitor_ce, when)
+                monitor_pe_px = self._price(monitor_pe, when)
+                if monitor_ce_px is None or monitor_pe_px is None:
                     continue
-                current_value = ce_px + pe_px
-                # Direction is inferred only after the upper combined-premium
-                # trigger. A CE-leading move signals an up-move, so sell PE;
-                # a PE-leading move signals a down-move, so sell CE.
-                ce_change_pct = (ce_px / ce.entry_price - 1) * 100
-                pe_change_pct = (pe_px / pe.entry_price - 1) * 100
+                current_value = monitor_ce_px + monitor_pe_px
+                # The separate monitoring straddle creates the signal but is
+                # never traded. A CE-leading move signals an up-move, so sell
+                # PE; a PE-leading move signals a down-move, so sell CE.
+                ce_change_pct = (monitor_ce_px / monitor_ce.entry_price - 1) * 100
+                pe_change_pct = (monitor_pe_px / monitor_pe.entry_price - 1) * 100
                 driver, replacement_type = (
                     ("CE", "PE") if ce_change_pct >= pe_change_pct else ("PE", "CE")
                 )
                 directional_driver = driver
                 if current_value >= up_trigger:
+                    # The monitor creates the signal; the original short
+                    # straddle is the position that must be closed.
+                    ce_px, pe_px = self._price(ce, when), self._price(pe, when)
+                    if ce_px is None or pe_px is None:
+                        continue
                     ce.close(when, ce_px); pe.close(when, pe_px)
                     adjustment_reason = f"straddle_up_{trigger_pct:g}pct_{driver}_driver_sell_{replacement_type.lower()}"
                 else:
                     continue
-                replacement = self._select_by_premium(day, expiry, replacement_type, when, spot_px, self.cfg.adjustment_premium)
+                replacement = self._premium_close_to(self.repo, self._option_cache, self.underlying_id, day, expiry, replacement_type, when, spot_px, self.cfg.adjustment_premium, self.cfg.strike_step, self.cfg)
                 if replacement is None:
                     exit_reason, exit_dt = "adjustment_no_replacement", when
                     break
@@ -272,7 +208,10 @@ class SDBreakoutBacktester:
             "initial_ce_open": float(ce.prices.iloc[0]["open"]),
             "initial_pe_ticker": pe.ticker, "initial_pe_strike": pe.strike, "initial_pe_entry": pe.entry_price, "initial_pe_exit": pe.exit_price,
             "initial_pe_open": float(pe.prices.iloc[0]["open"]),
-            "initial_combined_premium": initial_value, "straddle_up_trigger": up_trigger,
+            "initial_combined_premium": initial_value,
+            "monitor_ce_ticker": monitor_ce.ticker, "monitor_ce_strike": monitor_ce.strike, "monitor_ce_entry": monitor_ce.entry_price,
+            "monitor_pe_ticker": monitor_pe.ticker, "monitor_pe_strike": monitor_pe.strike, "monitor_pe_entry": monitor_pe.entry_price,
+            "monitor_combined_premium": monitor_initial_value, "straddle_up_trigger": up_trigger,
             "adjustment_reason": adjustment_reason,
             "directional_driver": directional_driver,
             "replacement_type": replacement.option_type if replacement else "", "replacement_ticker": replacement.ticker if replacement else "",
