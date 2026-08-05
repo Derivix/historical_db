@@ -23,16 +23,20 @@ class SDBreakoutConfig:
 
 @dataclass(frozen=True)
 class SDBreakout935:
-    entry_time: dt.time = dt.time(9, 35)
+    entry_time: dt.time = dt.time(10, 5)
     exit_time: dt.time = dt.time(15, 15)
     initial_premium: float = 50.0
     #ATM movement value -2,-1,0,1,2 
-    trigger_straddle_atm: int = 0
+    atm_offset: int = 0
     adjustment_premium: float = 60.0
-    wait_and_trade:int = 15
+    # After the reversal signal, wait for this additional move in the
+    # reversal-monitor straddle before placing the adjustment short.
+    wait_and_trade_pct: float = -15.0
     reverse_trend_pct: float = 5.0
-    # replacement_target_pct: float = 60.0
-    # replacement_stop_pct: float = 40.0
+    # The newly sold adjustment option is bought back if its premium rises by
+    # this percentage.  The remaining original short stays open until the
+    # combined-loss limit or the time exit.
+    adjustment_stop_pct: float = 25.0
     portfolio_loss_limit: float = 3_000.0
     strike_search_steps: int = 50
     lots: int = 1

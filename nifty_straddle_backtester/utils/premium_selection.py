@@ -71,12 +71,12 @@ def _premium_close_to(repo, _option_cache: dict, underlying_id: str, day: dt.dat
 def _ATM_strike(spot: float, strike_step: float) -> float:
     return round(spot / strike_step) * strike_step
 
-def _premium_on_atm(repo, _option_cache: dict, underlying_id: str, day: dt.date, expiry: dt.date, option_type: str, when: dt.datetime, spot: float, strike_step: float, cfg) -> _Leg | None:
+def _premium_on_atm(repo, _option_cache: dict, underlying_id: str, day: dt.date, expiry: dt.date, option_type: str, when: dt.datetime, spot: float, strike_step: float, cfg, atm_offset: int = 0) -> _Leg | None:
     
     candidate_lookup = getattr(repo, "get_option_candidates_at", None)
 
     if candidate_lookup is not None:       
-        atm_strike = _ATM_strike(spot, strike_step)
+        atm_strike = _ATM_strike(spot, strike_step) + atm_offset * strike_step
         candidate = candidate_lookup(
             underlying_id, 
             expiry, 
@@ -96,4 +96,15 @@ def _premium_on_atm(repo, _option_cache: dict, underlying_id: str, day: dt.date,
                     quantity = cfg.lots * int(instrument.get("lot_size") or 65)
                     return _Leg(option_type, instrument["instrument_id"], instrument.get("raw_ticker", ""), float(candidate["strike"]), when, price, quantity, prices)
 
-    
+    # Keep a repository-independent fallback for lightweight/demo data
+    # sources that do not implement get_option_candidates_at().
+    strike = _ATM_strike(spot, strike_step) + atm_offset * strike_step
+    found = _option_data(repo, _option_cache, underlying_id, expiry, strike, option_type, day)
+    if found is None:
+        return None
+    instrument, prices = found
+    price = _last_price(prices, when)
+    if price is None or price <= 0:
+        return None
+    quantity = cfg.lots * int(instrument.get("lot_size") or 65)
+    return _Leg(option_type, instrument["instrument_id"], instrument.get("raw_ticker", ""), strike, when, price, quantity, prices)

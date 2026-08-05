@@ -1,4 +1,4 @@
-"""CLI for the daily short-premium breakout backtest."""
+"""CLI for the 09:35 monitored-straddle reversal backtest."""
 from __future__ import annotations
 
 import argparse
@@ -10,7 +10,8 @@ import pandas as pd
 
 from config.settings import CostConfig
 from db.repository import MarketDataRepository
-from strategy_sdbreakout.backtester import SDBreakoutBacktester, SDBreakoutConfig
+from SDT935.backtester import SDBreakoutBacktester
+from utils.datatype import SDBreakout935
 
 
 def parse_dte_list(value: str) -> tuple[int, ...]:
@@ -47,15 +48,18 @@ def parse_time_grid(value: str) -> tuple[dt.time, ...]:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="09:22 daily short-premium breakout backtest")
+    parser = argparse.ArgumentParser(description="09:35 monitored-straddle reversal backtest")
     parser.add_argument("--dsn", required=True, help="SQLAlchemy PostgreSQL DSN")
     parser.add_argument("--start", required=True, help="YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="YYYY-MM-DD")
     parser.add_argument("--symbol", default="NIFTY")
     parser.add_argument("--lots", type=int, default=1)
     parser.add_argument("--strike-search-steps", type=int, default=30)
-    parser.add_argument("--trigger-start", type=float, default=3.0)
-    parser.add_argument("--trigger-end", type=float, default=200.0)
+    # A single trigger is the safe default.  A range intentionally requests a
+    # parameter sweep, which is much slower because every value is simulated
+    # independently for every trading day.
+    parser.add_argument("--trigger-start", type=float, default=5.0)
+    parser.add_argument("--trigger-end", type=float, default=5.0)
     parser.add_argument("--trigger-step", type=float, default=1.0)
     parser.add_argument("--all-days", action="store_true", help="Trade every available trading day, regardless of DTE")
     parser.add_argument("--dte", type=parse_dte_list, help="Exact DTE values to trade, e.g. 0,1,3")
@@ -65,10 +69,12 @@ def parse_args():
     parser.add_argument("--disable-costs", action="store_true")
     parser.add_argument("--entry-times", type=parse_time_grid, help="Comma-separated entry-time grid, e.g. 09:22,10:02")
     parser.add_argument("--initial-premiums", type=parse_number_grid, help="Comma-separated initial-premium grid")
-    parser.add_argument("--adjustment-premiums", type=parse_number_grid, help="Comma-separated replacement-premium grid")
-    parser.add_argument("--replacement-target-pcts", type=parse_number_grid, help="Comma-separated replacement decay-target %% grid")
-    parser.add_argument("--replacement-stop-pcts", type=parse_number_grid, help="Comma-separated replacement stop-loss %% grid")
-    parser.add_argument("--portfolio-loss-limits", type=parse_number_grid, help="Comma-separated gross portfolio-loss-limit grid")
+    parser.add_argument("--trigger-atm-offset", type=int, default=0, help="ATM-strike offset used by the first monitoring straddle")
+    parser.add_argument("--adjustment-premiums", type=parse_number_grid, help="Comma-separated adjustment-premium grid")
+    parser.add_argument("--reverse-trend-pcts", type=parse_number_grid, help="Comma-separated reversal-straddle trigger %% grid")
+    parser.add_argument("--wait-and-trade-pcts", type=parse_number_grid, help="Comma-separated extra wait-and-trade %% grid")
+    parser.add_argument("--adjustment-stop-pcts", type=parse_number_grid, help="Comma-separated adjustment stop-loss %% grid")
+    parser.add_argument("--combined-loss-limits", type=parse_number_grid, help="Comma-separated combined gross-loss-limit grid")
     return parser.parse_args()
 
 
@@ -86,28 +92,34 @@ def main():
     trigger_values = [round(args.trigger_start + i * args.trigger_step, 8) for i in range(count + 1)]
     sweep_requested = any((
         args.entry_times, args.initial_premiums, args.adjustment_premiums,
-        args.replacement_target_pcts, args.replacement_stop_pcts, args.portfolio_loss_limits,
+        args.reverse_trend_pcts, args.wait_and_trade_pcts, args.adjustment_stop_pcts,
+        args.combined_loss_limits,
     ))
-    defaults = SDBreakoutConfig()
+    defaults = SDBreakout935()
     config_grid = product(
         args.entry_times or (defaults.entry_time,),
         args.initial_premiums or (defaults.initial_premium,),
         args.adjustment_premiums or (defaults.adjustment_premium,),
-        args.replacement_target_pcts or (defaults.replacement_target_pct,),
-        args.replacement_stop_pcts or (defaults.replacement_stop_pct,),
-        args.portfolio_loss_limits or (defaults.portfolio_loss_limit,),
+        args.reverse_trend_pcts or (defaults.reverse_trend_pct,),
+        args.wait_and_trade_pcts or (defaults.wait_and_trade_pct,),
+        args.adjustment_stop_pcts or (defaults.adjustment_stop_pct,),
+        args.combined_loss_limits or (defaults.portfolio_loss_limit,),
     )
     configurations = list(config_grid)
     if len(configurations) > 500:
         raise SystemExit(f"Refusing to run {len(configurations)} static configurations; reduce the supplied grids to 500 or fewer.")
     repo = MarketDataRepository(args.dsn)
-    def show_progress(day_number, total_days, day):
-        print(f"Processing trading day {day_number}/{total_days}: {day}", flush=True)
+    def show_progress(day_number, total_days, day, trigger_number=None, total_triggers=None):
+        if trigger_number is None or total_triggers is None:
+            print(f"Processing trading day {day_number}/{total_days}: {day}", flush=True)
+        else:
+            print(f"Processing day {day_number}/{total_days}: {day} | trigger {trigger_number}/{total_triggers}", flush=True)
 
     try:
         if not sweep_requested:
-            cfg = SDBreakoutConfig(
+            cfg = SDBreakout935(
                 lots=args.lots, strike_search_steps=args.strike_search_steps,
+                atm_offset=args.trigger_atm_offset,
                 allowed_dte=args.dte, min_dte=args.min_dte, max_dte=args.max_dte,
                 costs=CostConfig(enabled=not args.disable_costs),
             )
@@ -119,12 +131,13 @@ def main():
             all_logs, all_evaluations = [], []
             base_dir = Path(args.output_dir) / "strategy_sdbreakout" / "parameter_sweep"
             for config_id, values in enumerate(configurations, start=1):
-                entry_time, initial_premium, adjustment_premium, target_pct, stop_pct, loss_limit = values
-                print(f"Running configuration {config_id}/{len(configurations)}: entry={entry_time:%H:%M}, initial={initial_premium:g}, adjustment={adjustment_premium:g}, target={target_pct:g}%, stop={stop_pct:g}%, loss_limit={loss_limit:g}", flush=True)
-                cfg = SDBreakoutConfig(
+                entry_time, initial_premium, adjustment_premium, reverse_pct, wait_pct, stop_pct, loss_limit = values
+                print(f"Running configuration {config_id}/{len(configurations)}: entry={entry_time:%H:%M}, initial={initial_premium:g}, adjustment={adjustment_premium:g}, reversal={reverse_pct:g}%, wait={wait_pct:g}%, stop={stop_pct:g}%, combined_loss={loss_limit:g}", flush=True)
+                cfg = SDBreakout935(
                     entry_time=entry_time, initial_premium=initial_premium,
-                    adjustment_premium=adjustment_premium, replacement_target_pct=target_pct,
-                    replacement_stop_pct=stop_pct, portfolio_loss_limit=loss_limit,
+                    adjustment_premium=adjustment_premium, reverse_trend_pct=reverse_pct,
+                    wait_and_trade_pct=wait_pct, adjustment_stop_pct=stop_pct,
+                    portfolio_loss_limit=loss_limit, atm_offset=args.trigger_atm_offset,
                     lots=args.lots, strike_search_steps=args.strike_search_steps,
                     allowed_dte=args.dte, min_dte=args.min_dte, max_dte=args.max_dte,
                     costs=CostConfig(enabled=not args.disable_costs),
@@ -157,7 +170,7 @@ def main():
     best = evaluation.iloc[0]
     print(f"\nBest trigger: {float(best['trigger_pct']):g}%")
     if sweep_requested:
-        print(f"Best configuration: #{int(best['config_id'])} (entry={best['entry_time']}, initial={float(best['initial_premium']):g}, adjustment={float(best['adjustment_premium']):g}, target={float(best['replacement_target_pct']):g}%, stop={float(best['replacement_stop_pct']):g}%, loss_limit={float(best['portfolio_loss_limit']):g})")
+        print(f"Best configuration: #{int(best['config_id'])} (entry={best['entry_time']}, initial={float(best['initial_premium']):g}, adjustment={float(best['adjustment_premium']):g}, reversal={float(best['reverse_trend_pct']):g}%, wait={float(best['wait_and_trade_pct']):g}%, stop={float(best['adjustment_stop_pct']):g}%, combined_loss={float(best['portfolio_loss_limit']):g})")
     print(f"Trade rows across all trading days and trigger values: {len(log)}")
     for name, path in paths.items():
         print(f"{name}: {path}")
